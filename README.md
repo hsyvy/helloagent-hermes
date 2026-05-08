@@ -29,7 +29,7 @@ The bridge holds two things at once:
    long-lived `ha_*` agent token. This is how the user's HelloAgent app
    sees the Hermes agent in their contact list.
 2. **A wschat WebSocket server** — listens on `ws://127.0.0.1:8770` for the
-   Hermes [`wschat` plugin](../hermes-ws-channel/) to connect.
+   Hermes `wschat` plugin to connect.
 
 Inbound messages from the user flow relay → bridge → wschat → Hermes.
 Hermes' streamed reply chunks flow back the other way and are forwarded
@@ -37,9 +37,7 @@ to the user as a streaming response on the relay's protocol.
 
 ## Auth
 
-The pairing flow is lifted from
-[`integrations/openclaw-HelloAgent/src/auth/`](../openclaw-HelloAgent/src/auth/).
-Three paths, identical UX:
+The pairing flow mirrors [`@helloagentai/openclaw`](https://www.npmjs.com/package/@helloagentai/openclaw). Three paths, identical UX:
 
 1. **Browser PKCE OAuth** (default for `pair`) — opens a browser to
    `<webUrl>/oauth/connect`, captures the redirect on a loopback server,
@@ -51,11 +49,11 @@ Three paths, identical UX:
    `ha_*` token; we validate it with one WS handshake against the relay,
    then persist.
 
-> The relay's [`channelProviders`](../../relay/internal/api/channels.go)
-> map currently knows only `"openclaw"`, so internally we link as the
-> `openclaw` provider for now. Functionally identical for the bridge —
-> when the relay registers `"hermes"` as a provider this becomes a
-> two-line change in [`auth/login-oauth.ts`](src/auth/login-oauth.ts) and
+> The relay's `channelProviders` map currently knows only `"openclaw"`, so
+> internally we link as the `openclaw` provider for now. Functionally
+> identical for the bridge — when the relay registers `"hermes"` as a
+> provider this becomes a two-line change in
+> [`auth/login-oauth.ts`](src/auth/login-oauth.ts) and
 > [`auth/login-device.ts`](src/auth/login-device.ts).
 
 Credentials are persisted at `~/.helloagent-hermes/credentials/<accountId>/creds.json`
@@ -65,28 +63,25 @@ file. Override the state dir with `HA_HERMES_BRIDGE_DIR`.
 ## Quickstart
 
 ```bash
-cd integrations/helloagent-hermes
-npm install
-npm run build
+npm install -g @helloagentai/hermes
 
 # 1) Pair with HelloAgent
-node dist/cli.js pair --agent-name jarvis \
-  --api-url http://localhost:8080 \
-  --web-url http://localhost:5173
+helloagent-hermes pair --agent-name jarvis \
+  --api-url https://api.helloagent.cc \
+  --web-url https://app.helloagent.cc
 
 # Or for a headless box:
-node dist/cli.js pair --device --agent-name jarvis
+helloagent-hermes pair --device --agent-name jarvis
 
 # Or to import an existing token:
-node dist/cli.js pair \
-  --token ha_xxx \
-  --relay-ws ws://localhost:8080/v1/ws
+helloagent-hermes pair --token ha_xxx \
+  --relay-ws wss://api.helloagent.cc/v1/ws
 
 # 2) Start the bridge
-node dist/cli.js run --port 8770
+helloagent-hermes run --port 8770
 
 # 3) Tell Hermes to use it
-#    (assumes integrations/hermes-ws-channel is symlinked into ~/.hermes/plugins/wschat
+#    (assumes the Hermes wschat plugin is installed under ~/.hermes/plugins/wschat
 #     and platforms.wschat.enabled: true is set in ~/.hermes/config.yaml)
 WSCHAT_URL=ws://127.0.0.1:8770 hermes gateway run
 ```
@@ -152,4 +147,4 @@ src/
 
 ## License
 
-Same as the parent HelloAgent repo.
+MIT

@@ -46,7 +46,7 @@
     "node": ">=22"
   },
   "dependencies": {
-    "@helloagentai/sdk": "file:../../sdk-ts",
+    "@helloagentai/sdk": "^0.2.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
