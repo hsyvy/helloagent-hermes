@@ -1,13 +1,13 @@
 /**
  * Per-account managed HelloAgent SDK client.
  *
- * Wraps `Agent` from `@helloagent/sdk` and tracks lifecycle status
+ * Wraps `Agent` from `@helloagentai/sdk` and tracks lifecycle status
  * (starting → ready → needs_repairing → stopped) plus a typed inbound
  * handler. Adapted from openclaw-HelloAgent/src/core/ha-client.ts but
  * trimmed: we don't need OpenClaw's plugin status surface, just a small
  * onStatus callback for the bridge runner.
  */
-import { Agent, AuthFailedError, type IncomingMessage } from "@helloagent/sdk";
+import { Agent, AuthFailedError, type IncomingMessage } from "@helloagentai/sdk";
 
 import { logger } from "./logger.js";
 import type { ResolvedAccount } from "./types.js";

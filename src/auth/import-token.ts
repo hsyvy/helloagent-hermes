@@ -6,7 +6,7 @@
  * Lifted from openclaw-HelloAgent/src/auth/import-token.ts with imports
  * pointed at the bridge-local store.
  */
-import { Agent, AuthFailedError } from "@helloagent/sdk";
+import { Agent, AuthFailedError } from "@helloagentai/sdk";
 
 import {
   CREDS_VERSION,
