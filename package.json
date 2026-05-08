@@ -1,9 +1,25 @@
 {
-  "name": "@helloagent/helloagent-hermes",
+  "name": "@helloagent/hermes",
   "version": "0.1.0",
   "description": "Bridge between HelloAgent's relay and a Hermes Agent gateway. HelloAgent users chat with their personal Hermes through the same UX as any HelloAgent contact.",
+  "license": "MIT",
+  "author": "HelloAgent",
+  "homepage": "https://github.com/helloagentai/helloagent-hermes#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/helloagentai/helloagent-hermes.git"
+  },
+  "bugs": {
+    "url": "https://github.com/helloagentai/helloagent-hermes/issues"
+  },
+  "keywords": [
+    "helloagent",
+    "hermes",
+    "bridge",
+    "agent",
+    "relay"
+  ],
   "type": "module",
-  "private": true,
   "bin": {
     "helloagent-hermes": "./dist/cli.js"
   },
@@ -11,11 +27,20 @@
     ".": "./dist/index.js"
   },
   "main": "./dist/index.js",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "start": "node ./dist/cli.js",
-    "dev": "tsx src/cli.ts"
+    "dev": "tsx src/cli.ts",
+    "prepublishOnly": "npm run build"
   },
   "engines": {
     "node": ">=22"
