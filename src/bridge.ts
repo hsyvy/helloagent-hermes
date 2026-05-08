@@ -25,7 +25,7 @@
  * need to coalesce mid-stream edits into a single chunk per turn.
  */
 import { randomUUID } from "node:crypto";
-import type { IncomingMessage } from "@helloagent/sdk";
+import type { IncomingMessage } from "@helloagentai/sdk";
 
 import { HaClient } from "./core/ha-client.js";
 import { logger } from "./core/logger.js";

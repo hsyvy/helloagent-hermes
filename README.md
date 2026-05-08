@@ -1,4 +1,4 @@
-# @helloagent/hermes
+# @helloagentai/hermes
 
 A bridge that lets HelloAgent users chat with their personal Hermes agent.
 

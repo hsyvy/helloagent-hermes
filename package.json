@@ -1,5 +1,5 @@
 {
-  "name": "@helloagent/hermes",
+  "name": "@helloagentai/hermes",
   "version": "0.1.0",
   "description": "Bridge between HelloAgent's relay and a Hermes Agent gateway. HelloAgent users chat with their personal Hermes through the same UX as any HelloAgent contact.",
   "license": "MIT",
@@ -46,7 +46,7 @@
     "node": ">=22"
   },
   "dependencies": {
-    "@helloagent/sdk": "file:../../sdk-ts",
+    "@helloagentai/sdk": "file:../../sdk-ts",
     "ws": "^8.18.0"
   },
   "devDependencies": {
