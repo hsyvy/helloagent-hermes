@@ -66,9 +66,7 @@ file. Override the state dir with `HA_HERMES_BRIDGE_DIR`.
 npm install -g @helloagentai/hermes
 
 # 1) Pair with HelloAgent
-helloagent-hermes pair --agent-name jarvis \
-  --api-url https://api.helloagent.cc \
-  --web-url https://app.helloagent.cc
+helloagent-hermes pair --agent-name jarvis
 
 # Or for a headless box:
 helloagent-hermes pair --device --agent-name jarvis
@@ -106,8 +104,8 @@ Environment variables:
 |---|---|---|
 | `HA_HERMES_BRIDGE_DIR` | `~/.helloagent-hermes` | State dir |
 | `HA_HERMES_BRIDGE_AUTH_DIR` | `<state>/credentials` | Cred dir override |
-| `HA_HERMES_BRIDGE_API_URL` | `http://localhost:8080` | Default `--api-url` |
-| `HA_HERMES_BRIDGE_WEB_URL` | `http://localhost:5173` | Default `--web-url` |
+| `HA_HERMES_BRIDGE_API_URL` | `https://api.helloagent.cc` | Default `--api-url` (override for local relay dev) |
+| `HA_HERMES_BRIDGE_WEB_URL` | `https://app.helloagent.cc` | Default `--web-url` (override for local web dev) |
 | `HA_HERMES_BRIDGE_CLIENT_ID` | `helloagent-hermes` | OAuth client id |
 | `HA_HERMES_BRIDGE_DEBUG` | unset | Verbose logs |
 
