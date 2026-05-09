@@ -4,11 +4,10 @@
  * access token, calls `/v1/channels/openclaw/link`, persists the returned
  * ha_* token to disk.
  *
- * NOTE: provider is hardcoded to "openclaw" because the relay's
- * `channelProviders` map (relay/internal/api/channels.go) only knows
- * "openclaw" today. Functionally identical for our purposes — the relay
- * just labels the link that way. Switch to "hermes" once the relay
- * registers it.
+ * NOTE: provider is hardcoded to "openclaw" because the HelloAgent server
+ * only registers that channel-provider name today. Functionally identical
+ * for our purposes — the server just labels the link that way. Switch to
+ * "hermes" once the server registers it.
  */
 import {
   HelloAgentApiError,
@@ -23,7 +22,7 @@ import {
   writeCreds,
 } from "./store.js";
 
-const CHANNEL_PROVIDER = "openclaw"; // TODO: switch to "hermes" once relay supports
+const CHANNEL_PROVIDER = "openclaw"; // TODO: switch to "hermes" once HelloAgent server registers it
 
 export type ExchangeAndPersistOptions = {
   code: string;
@@ -64,7 +63,7 @@ export async function exchangeAndPersist(
     ownerHandle: linkResp.user_handle,
     token: linkResp.token,
     apiUrl: opts.apiUrl,
-    relayWs: linkResp.relay_ws,
+    serverWs: linkResp.relay_ws,
     linkedAt: new Date().toISOString(),
     source: "oauth",
   };

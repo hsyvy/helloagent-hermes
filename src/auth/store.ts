@@ -1,7 +1,5 @@
 /**
- * Persists per-account HelloAgent credentials to disk. Mirrors
- * openclaw-HelloAgent/src/core/auth-store.ts but rooted under the bridge's
- * own state dir so it doesn't share a directory with OpenClaw.
+ * Persists per-account HelloAgent credentials to disk.
  *
  * Layout:
  *   <stateDir>/credentials/<accountId>/creds.json
@@ -27,7 +25,7 @@ export type Creds = {
   ownerHandle: string;
   token: string;
   apiUrl: string;
-  relayWs: string;
+  serverWs: string;
   linkedAt: string;
   source?: "oauth" | "device" | "manual";
 };
@@ -63,7 +61,9 @@ export async function readCreds(
     const raw = await fs.readFile(credsPath(accountId), "utf-8");
     const parsed = JSON.parse(raw) as Creds;
     if (parsed.version !== CREDS_VERSION) {
-      throw new Error(`unsupported creds version: ${parsed.version}`);
+      throw new Error(
+        `creds at ${credsPath(accountId)} are version ${parsed.version}, expected ${CREDS_VERSION}. Run 'helloagent-hermes pair' to re-link, or 'helloagent-hermes logout --account ${accountId}' to delete.`,
+      );
     }
     return parsed;
   } catch (e) {

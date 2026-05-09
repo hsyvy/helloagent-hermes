@@ -1,6 +1,5 @@
 /**
  * Tiny namespaced logger. Honors HA_HERMES_BRIDGE_DEBUG=1 for verbose output.
- * Adapted from openclaw-HelloAgent/src/core/ha-logger.ts.
  */
 
 const DEBUG = process.env.HA_HERMES_BRIDGE_DEBUG === "1";

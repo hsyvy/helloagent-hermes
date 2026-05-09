@@ -5,9 +5,9 @@
  * `message` frames; receive Hermes outbound `send`/`edit` frames → notify
  * subscribers.
  *
- * Wire protocol matches integrations/hermes-ws-channel/adapter.py.
+ * Wire protocol matches the Hermes wschat plugin; frame shapes live in
+ * ./types.ts.
  */
-import { randomUUID } from "node:crypto";
 import { WebSocketServer, type WebSocket } from "ws";
 
 import { logger } from "../core/logger.js";
@@ -236,5 +236,3 @@ function isClientFrame(v: unknown): v is ClientToServer {
     t === "hello" || t === "send" || t === "edit" || t === "typing" || t === "pong"
   );
 }
-
-export { randomUUID as newMsgId };

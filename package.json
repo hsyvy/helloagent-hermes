@@ -1,7 +1,7 @@
 {
   "name": "@helloagentai/hermes",
   "version": "0.1.0",
-  "description": "Bridge between HelloAgent's relay and a Hermes Agent gateway. HelloAgent users chat with their personal Hermes through the same UX as any HelloAgent contact.",
+  "description": "Bridge between the HelloAgent server and a Hermes Agent gateway. HelloAgent users chat with their personal Hermes through the same UX as any HelloAgent contact.",
   "license": "MIT",
   "author": "HelloAgent",
   "homepage": "https://github.com/helloagentai/helloagent-hermes#readme",
@@ -16,17 +16,21 @@
     "helloagent",
     "hermes",
     "bridge",
-    "agent",
-    "relay"
+    "agent"
   ],
   "type": "module",
   "bin": {
     "helloagent-hermes": "./dist/cli.js"
   },
   "exports": {
-    ".": "./dist/index.js"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
   },
   "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "files": [
     "dist",
     "README.md",

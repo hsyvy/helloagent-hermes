@@ -3,8 +3,7 @@
  * print a short user code, the user signs in elsewhere and approves the
  * code, the bridge polls until it receives a scoped channel-link token.
  *
- * Lifted from openclaw-HelloAgent/src/auth/login-device.ts; provider held
- * at "openclaw" for now (see ./login-oauth.ts).
+ * Provider held at "openclaw" for now (see ./login-oauth.ts).
  */
 import {
   HelloAgentApiError,
@@ -86,7 +85,7 @@ export async function pairWithDeviceCode(opts: DevicePairOptions): Promise<Creds
     ownerHandle: linkResp.user_handle,
     token: linkResp.token,
     apiUrl: opts.apiUrl,
-    relayWs: linkResp.relay_ws,
+    serverWs: linkResp.relay_ws,
     linkedAt: new Date().toISOString(),
     source: "device",
   };
