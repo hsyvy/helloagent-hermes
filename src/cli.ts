@@ -23,8 +23,8 @@
  *     --account <ID>   Account id (default: default).
  *
  * Defaults:
- *   API URL  http://localhost:8080
- *   Web URL  http://localhost:5173
+ *   API URL  https://api.helloagent.cc
+ *   Web URL  https://app.helloagent.cc
  *   Client   helloagent-hermes
  */
 import { pairWithBrowser } from "./auth/login.js";
@@ -70,8 +70,8 @@ function envOrDefault(envName: string, fallback: string): string {
 }
 
 const DEFAULTS = {
-  apiUrl: () => envOrDefault("HA_HERMES_BRIDGE_API_URL", "http://localhost:8080"),
-  webUrl: () => envOrDefault("HA_HERMES_BRIDGE_WEB_URL", "http://localhost:5173"),
+  apiUrl: () => envOrDefault("HA_HERMES_BRIDGE_API_URL", "https://api.helloagent.cc"),
+  webUrl: () => envOrDefault("HA_HERMES_BRIDGE_WEB_URL", "https://app.helloagent.cc"),
   clientId: () => envOrDefault("HA_HERMES_BRIDGE_CLIENT_ID", "helloagent-hermes"),
   agentName: "hermes",
   port: 8770,
