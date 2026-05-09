@@ -8,9 +8,9 @@ A bridge that lets HelloAgent users chat with their personal Hermes agent.
    HelloAgent client (web / iOS)
             │
             ▼  WebSocket, ha_* token
-   HelloAgent relay (Go)
+   HelloAgent server
             │
-            ▼  WebSocket, ha_* token   (relay-side: this bridge looks like
+            ▼  WebSocket, ha_* token   (server-side: this bridge looks like
    ┌────────────────────┐               an agent named e.g. @alice/hermes)
    │ helloagent-hermes  │
    │  (this package)    │
@@ -25,15 +25,15 @@ A bridge that lets HelloAgent users chat with their personal Hermes agent.
 
 The bridge holds two things at once:
 
-1. **A relay client** — authenticated via the HelloAgent SDK using a
-   long-lived `ha_*` agent token. This is how the user's HelloAgent app
+1. **A HelloAgent server client** — authenticated via the HelloAgent SDK using
+   a long-lived `ha_*` agent token. This is how the user's HelloAgent app
    sees the Hermes agent in their contact list.
 2. **A wschat WebSocket server** — listens on `ws://127.0.0.1:8770` for the
    Hermes `wschat` plugin to connect.
 
-Inbound messages from the user flow relay → bridge → wschat → Hermes.
-Hermes' streamed reply chunks flow back the other way and are forwarded
-to the user as a streaming response on the relay's protocol.
+Inbound messages from the user flow HelloAgent server → bridge → wschat →
+Hermes. Hermes' streamed reply chunks flow back the other way and are
+forwarded to the user as a streaming response.
 
 ## Auth
 
@@ -45,13 +45,13 @@ The pairing flow mirrors [`@helloagentai/openclaw`](https://www.npmjs.com/packag
    a scoped `ha_*` agent token, persists creds.
 2. **Device code** (`--device`) — for headless/CI machines. Print a
    user code, the user approves it from any other browser.
-3. **Manual token import** (`--token --relay-ws`) — paste an existing
-   `ha_*` token; we validate it with one WS handshake against the relay,
-   then persist.
+3. **Manual token import** (`--token --server-ws`) — paste an existing
+   `ha_*` token; we validate it with one WS handshake against the
+   HelloAgent server, then persist.
 
-> The relay's `channelProviders` map currently knows only `"openclaw"`, so
-> internally we link as the `openclaw` provider for now. Functionally
-> identical for the bridge — when the relay registers `"hermes"` as a
+> The HelloAgent server only registers the channel-provider name `"openclaw"`
+> today, so internally we link as that provider for now. Functionally
+> identical for the bridge — when the server registers `"hermes"` as a
 > provider this becomes a two-line change in
 > [`auth/login-oauth.ts`](src/auth/login-oauth.ts) and
 > [`auth/login-device.ts`](src/auth/login-device.ts).
@@ -73,7 +73,7 @@ helloagent-hermes pair --device --agent-name jarvis
 
 # Or to import an existing token:
 helloagent-hermes pair --token ha_xxx \
-  --relay-ws wss://api.helloagent.cc/v1/ws
+  --server-ws wss://api.helloagent.cc/v1/ws
 
 # 2) Start the bridge
 helloagent-hermes run --port 8770
@@ -89,7 +89,7 @@ Now any HelloAgent user can DM `@<your-handle>/jarvis` and chat with Hermes.
 ## CLI
 
 ```
-helloagent-hermes pair    [--device | --token <T> --relay-ws <URL>]
+helloagent-hermes pair    [--device | --token <T> --server-ws <URL>]
                           [--agent-name <N>] [--api-url <URL>] [--web-url <URL>]
                           [--account <ID>]
 helloagent-hermes run     [--port <N>] [--host <H>] [--wschat-token <T>]
@@ -104,8 +104,8 @@ Environment variables:
 |---|---|---|
 | `HA_HERMES_BRIDGE_DIR` | `~/.helloagent-hermes` | State dir |
 | `HA_HERMES_BRIDGE_AUTH_DIR` | `<state>/credentials` | Cred dir override |
-| `HA_HERMES_BRIDGE_API_URL` | `https://api.helloagent.cc` | Default `--api-url` (override for local relay dev) |
-| `HA_HERMES_BRIDGE_WEB_URL` | `https://app.helloagent.cc` | Default `--web-url` (override for local web dev) |
+| `HA_HERMES_BRIDGE_API_URL` | `https://api.helloagent.cc` | Default `--api-url` (override for a local HelloAgent server) |
+| `HA_HERMES_BRIDGE_WEB_URL` | `https://app.helloagent.cc` | Default `--web-url` (override for a local HelloAgent web app) |
 | `HA_HERMES_BRIDGE_CLIENT_ID` | `helloagent-hermes` | OAuth client id |
 | `HA_HERMES_BRIDGE_DEBUG` | unset | Verbose logs |
 
@@ -117,7 +117,7 @@ Environment variables:
 - Edits — we advertise `supports: ["typing"]` so Hermes' streamer
   auto-downgrades to fresh-send chunks. Each Hermes `send` becomes one
   `StreamChunk` back to the user.
-- Reactions, read receipts, typing indicators on the relay side.
+- Reactions, read receipts, typing indicators on the HelloAgent server side.
 
 ## Layout
 
@@ -137,7 +137,7 @@ src/
 ├── wschat/
 │   ├── server.ts          local WS server (single Hermes client)
 │   ├── types.ts           wire frames
-│   └── dedup.ts           inbound dedup (relay reconnects)
+│   └── dedup.ts           inbound dedup (server reconnects)
 ├── bridge.ts              wires HaClient ↔ wschat server, streaming bridge
 ├── cli.ts                 pair / run / status / logout
 └── index.ts               library re-exports

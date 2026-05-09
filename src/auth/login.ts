@@ -8,9 +8,6 @@
  *      verify state matches our CSRF token, capture the code.
  *   4. Hand off to ./login-oauth#exchangeAndPersist (token + link + persist).
  *   5. Close the loopback server, return the persisted creds.
- *
- * Lifted from openclaw-HelloAgent/src/auth/login.ts with the import of the
- * persist-side updated to the bridge's local store.
  */
 import { spawn } from "node:child_process";
 import crypto from "node:crypto";
@@ -23,7 +20,7 @@ import { exchangeAndPersist } from "./login-oauth.js";
 export type PairOptions = {
   agentName: string;
   clientId: string;
-  /** Optional confidential-client secret. Local relays use PKCE instead. */
+  /** Optional confidential-client secret. Local dev clients use PKCE instead. */
   clientSecret?: string;
   apiUrl: string;
   webUrl: string;

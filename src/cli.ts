@@ -5,13 +5,13 @@
  * Commands:
  *   pair               Pair with HelloAgent. Default: PKCE OAuth (browser).
  *     --device         Headless device-code flow.
- *     --token <T> --relay-ws <URL>  Manual ha_* token import (no browser).
+ *     --token <T> --server-ws <URL>  Manual ha_* token import (no browser).
  *     --agent-name <N> Suffix used after your handle (default: hermes).
  *     --api-url <URL>  HelloAgent REST base.   Env: HA_HERMES_BRIDGE_API_URL
  *     --web-url <URL>  HelloAgent web base.    Env: HA_HERMES_BRIDGE_WEB_URL
  *     --account <ID>   Account id for multi-account setups (default: default).
  *
- *   run                Start the bridge (relay client + wschat server).
+ *   run                Start the bridge (HelloAgent server client + wschat server).
  *     --port <N>       wschat bind port (default 8770).
  *     --host <H>       wschat bind host (default 127.0.0.1).
  *     --wschat-token <T>  Optional shared secret Hermes must echo in hello.
@@ -30,7 +30,6 @@
 import { pairWithBrowser } from "./auth/login.js";
 import { pairWithDeviceCode } from "./auth/login-device.js";
 import { importToken } from "./auth/import-token.js";
-import { hasAnyAuth } from "./auth/presence.js";
 import {
   DEFAULT_ACCOUNT_ID,
   deleteCreds,
@@ -86,12 +85,12 @@ async function cmdPair(flags: Argv["flags"]): Promise<void> {
 
   // Manual import path
   if (typeof flags.token === "string" && flags.token) {
-    const relayWs = String(flags["relay-ws"] ?? "");
-    if (!relayWs) throw new Error("--relay-ws is required with --token");
+    const serverWs = String(flags["server-ws"] ?? "");
+    if (!serverWs) throw new Error("--server-ws is required with --token");
     const creds = await importToken({
       token: String(flags.token),
       apiUrl,
-      relayWs,
+      serverWs,
       accountId,
       onProgress: (l) => console.log(l),
     });
@@ -148,7 +147,7 @@ async function cmdRun(flags: Argv["flags"]): Promise<void> {
       ownerHandle: creds.ownerHandle,
       token: creds.token,
       apiUrl: creds.apiUrl,
-      relayWs: creds.relayWs,
+      serverWs: creds.serverWs,
     },
     host,
     port,
@@ -184,7 +183,7 @@ async function cmdStatus(): Promise<void> {
     console.log(`account: ${id}`);
     console.log(`  handle:    @${creds.handle}`);
     console.log(`  api:       ${creds.apiUrl}`);
-    console.log(`  relay:     ${creds.relayWs}`);
+    console.log(`  server:    ${creds.serverWs}`);
     console.log(`  linked:    ${creds.linkedAt}`);
     console.log(`  source:    ${creds.source ?? "(unknown)"}`);
   }
@@ -200,7 +199,7 @@ async function cmdLogout(flags: Argv["flags"]): Promise<void> {
   await deleteCreds(accountId);
   console.log(`✓ removed creds for @${creds.handle} (${accountId})`);
   console.log(
-    "Note: the relay-side agent token is not revoked — delete via the HelloAgent web UI or DELETE /v1/channels/<provider>.",
+    "Note: the server-side agent token is not revoked — delete via the HelloAgent web UI or DELETE /v1/channels/<provider>.",
   );
 }
 
@@ -208,7 +207,7 @@ function printHelp(): void {
   console.log(`helloagent-hermes — bridge HelloAgent users to a Hermes agent
 
 Usage:
-  helloagent-hermes pair [--device | --token <T> --relay-ws <URL>] [--agent-name <N>]
+  helloagent-hermes pair [--device | --token <T> --server-ws <URL>] [--agent-name <N>]
   helloagent-hermes run  [--port <N>] [--host <H>] [--wschat-token <T>]
   helloagent-hermes status
   helloagent-hermes logout [--account <ID>]
@@ -218,7 +217,7 @@ Examples:
   helloagent-hermes pair --agent-name jarvis
 
   # 2. Pair (manual token import for advanced users)
-  helloagent-hermes pair --token ha_xxx --relay-ws ws://localhost:8080/v1/ws
+  helloagent-hermes pair --token ha_xxx --server-ws wss://api.helloagent.cc/v1/ws
 
   # 3. Run the bridge
   helloagent-hermes run --port 8770
@@ -268,6 +267,3 @@ main().catch((err) => {
   }
   process.exit(1);
 });
-
-// Re-export hasAnyAuth so external embedders / tests can probe quickly.
-export { hasAnyAuth };

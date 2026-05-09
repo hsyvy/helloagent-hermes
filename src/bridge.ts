@@ -1,12 +1,12 @@
 /**
- * Bridge wiring: HelloAgent relay ↔ wschat server ↔ Hermes plugin.
+ * Bridge wiring: HelloAgent server ↔ wschat server ↔ Hermes plugin.
  *
  * Direction 1 (inbound to Hermes):
- *   relay → HaClient.onMessage(IncomingMessage)
+ *   HelloAgent server → HaClient.onMessage(IncomingMessage)
  *     → translate to wschat `message` frame
  *     → push to Hermes via wschat server
  *     → wait for Hermes' streamed reply (one or more `send` frames keyed
- *       by chatId, AsyncIterable<string> back to the relay)
+ *       by chatId, AsyncIterable<string> back to the HelloAgent server)
  *
  * Direction 2 (outbound from Hermes):
  *   Hermes → wschat `send`/`edit` frame
@@ -24,7 +24,6 @@
  * auto-downgrades to send-fresh chunks. If we ever advertise "edit" we'd
  * need to coalesce mid-stream edits into a single chunk per turn.
  */
-import { randomUUID } from "node:crypto";
 import type { IncomingMessage } from "@helloagentai/sdk";
 
 import { HaClient } from "./core/ha-client.js";
@@ -83,7 +82,7 @@ export function createBridge(opts: BridgeOptions): Bridge {
 
   let haClient: HaClient | null = null;
 
-  // Outbound: Hermes wschat frames → relay sends.
+  // Outbound: Hermes wschat frames → HelloAgent server sends.
   server.onClientFrame((frame: ClientToServer) => {
     if (frame.type === "send") {
       handleHermesSend(frame);
@@ -102,7 +101,7 @@ export function createBridge(opts: BridgeOptions): Bridge {
       return;
     }
     if (frame.type === "typing") {
-      // No relay-side typing indicator yet; logged for visibility.
+      // No server-side typing indicator yet; logged for visibility.
       log.debug(`hermes typing on ${frame.chatId}`);
       return;
     }
@@ -118,7 +117,7 @@ export function createBridge(opts: BridgeOptions): Bridge {
       return;
     }
     // No pending stream — Hermes is sending unsolicited (or the response
-    // already closed). Send via the relay as a fresh message.
+    // already closed). Send via the HelloAgent server as a fresh message.
     if (!haClient || haClient.status !== "ready") {
       log.warn(
         `dropping outbound send to ${frame.chatId}: ha-client not ready`,
@@ -134,8 +133,8 @@ export function createBridge(opts: BridgeOptions): Bridge {
     }
   }
 
-  // Inbound: relay messages → wschat `message` frame, then yield chunks
-  // back from the wschat side as Hermes streams its reply.
+  // Inbound: HelloAgent server messages → wschat `message` frame, then yield
+  // chunks back from the wschat side as Hermes streams its reply.
   function onIncoming(msg: IncomingMessage): AsyncIterable<string> | string {
     if (!dedup.tryRecord(msg.messageId)) {
       log.debug(`duplicate message ${msg.messageId}, skipping`);
@@ -174,18 +173,18 @@ export function createBridge(opts: BridgeOptions): Bridge {
 
   async function start(): Promise<void> {
     await server.start();
-    log.info(`bridge ready: relay=${opts.account.relayWs}, wschat=${opts.host ?? "127.0.0.1"}:${opts.port ?? 8770}`);
+    log.info(`wschat listening on ${opts.host ?? "127.0.0.1"}:${opts.port ?? 8770}`);
     haClient = new HaClient({
       account: opts.account,
       onIncoming,
       onStatus: (status, detail) => {
         if (status === "needs_repairing") {
-          log.error(`relay rejected token (${detail ?? "?"}). Re-pair.`);
+          log.error(`HelloAgent server rejected token (${detail ?? "?"}). Re-pair.`);
         }
       },
     });
     await haClient.ready;
-    log.info(`linked to relay as @${opts.account.handle}`);
+    log.info(`bridge ready: linked to HelloAgent as @${opts.account.handle}`);
   }
 
   async function stop(): Promise<void> {
@@ -202,6 +201,12 @@ export function createBridge(opts: BridgeOptions): Bridge {
 
   return { start, stop, isReady };
 }
+
+// Hermes' first chunk gets a more generous wait than subsequent ones:
+// LLMs typically take a moment to start streaming, but once chunks are
+// flowing they arrive fast. This multiplier applies to the initial timer
+// only; later chunks reset the timer to a single idleMs window.
+const INITIAL_REPLY_IDLE_MULTIPLIER = 5;
 
 // ---------------------------------------------------------------------------
 // Streaming helper: collects chunks from a producer until idle + returns
@@ -264,7 +269,10 @@ function collectStreamingResponse(opts: StreamCollectOpts): AsyncIterable<string
     channel.end();
   } else {
     // Arm the idle timer for the case where Hermes never replies.
-    idleTimer = setTimeout(() => channel.end(), opts.idleMs * 5);
+    idleTimer = setTimeout(
+      () => channel.end(),
+      opts.idleMs * INITIAL_REPLY_IDLE_MULTIPLIER,
+    );
   }
 
   return {
@@ -290,4 +298,3 @@ function collectStreamingResponse(opts: StreamCollectOpts): AsyncIterable<string
   };
 }
 
-export { randomUUID as newMsgId };

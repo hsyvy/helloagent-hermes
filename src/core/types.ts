@@ -13,6 +13,6 @@ export type ResolvedAccount = {
   token: string;
   /** REST API base. */
   apiUrl: string;
-  /** Relay WebSocket URL. */
-  relayWs: string;
+  /** HelloAgent server WebSocket URL. */
+  serverWs: string;
 };
