@@ -1,9 +1,12 @@
 /**
- * Wire types for the wschat protocol (matches the Hermes wschat plugin).
+ * Wire types for the agent-socket protocol.
  *
- * Hermes adapter (client) ↔ this bridge (server):
+ * Agent adapter (client) ↔ this bridge (server):
  *   client → server: hello, send, edit, typing, pong
  *   server → client: welcome, message, ack, ping, error
+ *
+ * On Hermes' side this protocol is currently exposed via a plugin named
+ * `wschat` — it implements this exact wire format.
  */
 
 export type HelloFrame = {

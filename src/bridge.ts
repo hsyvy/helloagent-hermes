@@ -1,15 +1,16 @@
 /**
- * Bridge wiring: HelloAgent server ↔ wschat server ↔ Hermes plugin.
+ * Bridge wiring: HelloAgent server ↔ agent socket ↔ agent (e.g. Hermes).
  *
- * Direction 1 (inbound to Hermes):
+ * Direction 1 (inbound to the agent):
  *   HelloAgent server → HaClient.onMessage(IncomingMessage)
- *     → translate to wschat `message` frame
- *     → push to Hermes via wschat server
- *     → wait for Hermes' streamed reply (one or more `send` frames keyed
- *       by chatId, AsyncIterable<string> back to the HelloAgent server)
+ *     → translate to wire `message` frame
+ *     → push to the agent via the agent socket
+ *     → wait for the agent's streamed reply (one or more `send` frames
+ *       keyed by chatId, AsyncIterable<string> back to the HelloAgent
+ *       server)
  *
- * Direction 2 (outbound from Hermes):
- *   Hermes → wschat `send`/`edit` frame
+ * Direction 2 (outbound from the agent):
+ *   agent → `send`/`edit` frame on the agent socket
  *     → bridge maps frame.chatId → recipient handle
  *     → HaClient.send(handle, text)
  *
@@ -20,7 +21,7 @@
  * matches push a chunk into that channel; when the chat goes idle for
  * `responseIdleMs` ms or the channel is explicitly ended, we close it.
  *
- * Edits: we advertise `supports: ["typing"]` only — the Hermes streamer
+ * Edits: we advertise `supports: ["typing"]` only — the agent's streamer
  * auto-downgrades to send-fresh chunks. If we ever advertise "edit" we'd
  * need to coalesce mid-stream edits into a single chunk per turn.
  */
@@ -29,27 +30,24 @@ import type { IncomingMessage } from "@helloagentai/sdk";
 import { HaClient } from "./core/ha-client.js";
 import { logger } from "./core/logger.js";
 import type { ResolvedAccount } from "./core/types.js";
-import { MessageDedup } from "./wschat/dedup.js";
-import {
-  createWschatServer,
-  type WschatServer,
-} from "./wschat/server.js";
+import { MessageDedup } from "./agent-socket/dedup.js";
+import { createAgentSocket } from "./agent-socket/server.js";
 import type {
   ClientToServer,
   IncomingMessageFrame,
   SendFrame,
-} from "./wschat/types.js";
+} from "./agent-socket/types.js";
 
 const log = logger("bridge");
 
 export type BridgeOptions = {
   account: ResolvedAccount;
-  /** wschat server bind. Default 127.0.0.1:8770. */
+  /** Agent socket bind. Default 127.0.0.1:8770. */
   host?: string;
   port?: number;
-  /** Optional shared secret the Hermes plugin must echo in hello.token. */
-  wschatToken?: string;
-  /** ms of silence after which we consider Hermes' reply complete. Default 1500. */
+  /** Optional shared secret the agent must echo in its hello frame. */
+  socketToken?: string;
+  /** ms of silence after which we consider the agent's reply complete. Default 1500. */
   responseIdleMs?: number;
 };
 
@@ -72,27 +70,27 @@ export function createBridge(opts: BridgeOptions): Bridge {
   const dedup = new MessageDedup();
   const pending = new Map<string, PendingResponse>(); // chatId → channel
 
-  const server = createWschatServer({
+  const server = createAgentSocket({
     host: opts.host,
     port: opts.port,
     agentId: opts.account.handle,
     supports: ["typing"], // see module doc — we don't claim edit support
-    authToken: opts.wschatToken,
+    authToken: opts.socketToken,
   });
 
   let haClient: HaClient | null = null;
 
-  // Outbound: Hermes wschat frames → HelloAgent server sends.
+  // Outbound: agent frames → HelloAgent server sends.
   server.onClientFrame((frame: ClientToServer) => {
     if (frame.type === "send") {
-      handleHermesSend(frame);
+      handleAgentSend(frame);
       return;
     }
     if (frame.type === "edit") {
       // We didn't advertise edit; treat any stray edit as a chunk anyway
       // so we don't lose data, but log a warning.
       log.warn("received edit frame though edit was not advertised; treating as chunk");
-      handleHermesSend({
+      handleAgentSend({
         type: "send",
         msgId: frame.msgId,
         chatId: frame.chatId,
@@ -101,13 +99,13 @@ export function createBridge(opts: BridgeOptions): Bridge {
       return;
     }
     if (frame.type === "typing") {
-      // No server-side typing indicator yet; logged for visibility.
-      log.debug(`hermes typing on ${frame.chatId}`);
+      // No HelloAgent-server-side typing indicator yet; logged for visibility.
+      log.debug(`agent typing on ${frame.chatId}`);
       return;
     }
   });
 
-  function handleHermesSend(frame: SendFrame): void {
+  function handleAgentSend(frame: SendFrame): void {
     server.ack(frame.msgId);
     const channel = pending.get(frame.chatId);
     if (channel && !channel.ended()) {
@@ -116,7 +114,7 @@ export function createBridge(opts: BridgeOptions): Bridge {
       channel.emit(frame.text);
       return;
     }
-    // No pending stream — Hermes is sending unsolicited (or the response
+    // No pending stream — the agent is sending unsolicited (or the response
     // already closed). Send via the HelloAgent server as a fresh message.
     if (!haClient || haClient.status !== "ready") {
       log.warn(
@@ -133,8 +131,8 @@ export function createBridge(opts: BridgeOptions): Bridge {
     }
   }
 
-  // Inbound: HelloAgent server messages → wschat `message` frame, then yield
-  // chunks back from the wschat side as Hermes streams its reply.
+  // Inbound: HelloAgent server messages → wire `message` frame, then yield
+  // chunks back as the agent streams its reply.
   function onIncoming(msg: IncomingMessage): AsyncIterable<string> | string {
     if (!dedup.tryRecord(msg.messageId)) {
       log.debug(`duplicate message ${msg.messageId}, skipping`);
@@ -142,7 +140,7 @@ export function createBridge(opts: BridgeOptions): Bridge {
     }
     if (!server.isReady()) {
       log.warn(
-        `inbound from @${msg.fromHandle} dropped — Hermes not connected to wschat yet`,
+        `inbound from @${msg.fromHandle} dropped — no agent connected to socket yet`,
       );
       return "";
     }
@@ -173,7 +171,7 @@ export function createBridge(opts: BridgeOptions): Bridge {
 
   async function start(): Promise<void> {
     await server.start();
-    log.info(`wschat listening on ${opts.host ?? "127.0.0.1"}:${opts.port ?? 8770}`);
+    log.info(`agent socket listening on ${opts.host ?? "127.0.0.1"}:${opts.port ?? 8770}`);
     haClient = new HaClient({
       account: opts.account,
       onIncoming,
@@ -202,7 +200,7 @@ export function createBridge(opts: BridgeOptions): Bridge {
   return { start, stop, isReady };
 }
 
-// Hermes' first chunk gets a more generous wait than subsequent ones:
+// The agent's first chunk gets a more generous wait than subsequent ones:
 // LLMs typically take a moment to start streaming, but once chunks are
 // flowing they arrive fast. This multiplier applies to the initial timer
 // only; later chunks reset the timer to a single idleMs window.
@@ -264,11 +262,11 @@ function collectStreamingResponse(opts: StreamCollectOpts): AsyncIterable<string
   };
 
   opts.register(channel);
-  // Push the inbound frame to Hermes; if the push fails we close out cleanly.
+  // Push the inbound frame to the agent; if the push fails we close out cleanly.
   if (!opts.pushFrame()) {
     channel.end();
   } else {
-    // Arm the idle timer for the case where Hermes never replies.
+    // Arm the idle timer for the case where the agent never replies.
     idleTimer = setTimeout(
       () => channel.end(),
       opts.idleMs * INITIAL_REPLY_IDLE_MULTIPLIER,

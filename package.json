@@ -41,6 +41,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "postbuild": "chmod +x dist/cli.js",
     "typecheck": "tsc --noEmit",
     "start": "node ./dist/cli.js",
     "dev": "tsx src/cli.ts",

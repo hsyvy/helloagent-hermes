@@ -1,12 +1,12 @@
 /**
- * Local wschat WebSocket server. Hermes' wschat plugin connects here as a
- * client (one connection per Hermes process). We expose a small typed
- * surface for the bridge: forward inbound HelloAgent messages → wschat
- * `message` frames; receive Hermes outbound `send`/`edit` frames → notify
+ * Local WebSocket server: the agent process (e.g. Hermes) connects here as
+ * a client (one connection per agent process). We expose a small typed
+ * surface for the bridge: forward inbound HelloAgent messages → wire
+ * `message` frames; receive agent-outbound `send`/`edit` frames → notify
  * subscribers.
  *
- * Wire protocol matches the Hermes wschat plugin; frame shapes live in
- * ./types.ts.
+ * Frame shapes live in ./types.ts. On Hermes' side this protocol is
+ * exposed via a plugin currently called `wschat`.
  */
 import { WebSocketServer, type WebSocket } from "ws";
 
@@ -18,9 +18,9 @@ import type {
   WelcomeFrame,
 } from "./types.js";
 
-const log = logger("wschat/server");
+const log = logger("agent-socket");
 
-export type WschatServerOptions = {
+export type AgentSocketOptions = {
   /** Bind host. Default 127.0.0.1. */
   host?: string;
   /** Bind port. Default 8770. */
@@ -29,7 +29,7 @@ export type WschatServerOptions = {
   agentId: string;
   /** Capabilities advertised in `welcome.supports`. */
   supports?: ("edit" | "typing")[];
-  /** Optional shared secret; if set, Hermes' hello.token must match. */
+  /** Optional shared secret; if set, the agent's hello.token must match. */
   authToken?: string;
 };
 
@@ -37,22 +37,22 @@ export type WschatServerOptions = {
  * Frames the bridge wants to know about. We do NOT surface ping/pong here —
  * server handles those itself.
  */
-export type ClientFrameHandler = (frame: ClientToServer) => void;
+type ClientFrameHandler = (frame: ClientToServer) => void;
 
-export type WschatServer = {
+export type AgentSocket = {
   start(): Promise<void>;
   stop(): Promise<void>;
-  /** Push an inbound HelloAgent message to the connected Hermes. */
+  /** Push an inbound HelloAgent message to the connected agent. */
   pushIncoming(msg: IncomingMessageFrame): boolean;
-  /** Emit an ack for a Hermes-sent msgId. */
+  /** Emit an ack for an agent-sent msgId. */
   ack(refMsgId: string): boolean;
-  /** Subscribe to Hermes-sent frames (send/edit/typing/pong). */
+  /** Subscribe to agent-sent frames (send/edit/typing/pong). */
   onClientFrame(handler: ClientFrameHandler): void;
-  /** True iff a Hermes plugin has completed the hello/welcome handshake. */
+  /** True iff an agent has completed the hello/welcome handshake. */
   isReady(): boolean;
 };
 
-export function createWschatServer(opts: WschatServerOptions): WschatServer {
+export function createAgentSocket(opts: AgentSocketOptions): AgentSocket {
   const host = opts.host ?? "127.0.0.1";
   const port = opts.port ?? 8770;
   const supports = opts.supports ?? ["typing"];
@@ -82,12 +82,12 @@ export function createWschatServer(opts: WschatServerOptions): WschatServer {
       safeJson(socket, {
         type: "error",
         code: "already_connected",
-        message: "wschat bridge accepts a single Hermes connection",
+        message: "agent socket accepts a single agent connection",
       });
       socket.close();
       return;
     }
-    log.info(`client connected from ${remote ?? "?"}`);
+    log.info(`agent connected from ${remote ?? "?"}`);
     active = socket;
     activeReady = false;
 
@@ -115,7 +115,7 @@ export function createWschatServer(opts: WschatServerOptions): WschatServer {
     });
 
     socket.on("close", () => {
-      log.info("client disconnected");
+      log.info("agent disconnected");
       if (active === socket) {
         active = null;
         activeReady = false;
@@ -150,7 +150,7 @@ export function createWschatServer(opts: WschatServerOptions): WschatServer {
       safeJson(socket, welcome);
       activeReady = true;
       log.info(`handshake complete (agent=${frame.agent}, version=${frame.version})`);
-      // Start app-level keepalive ping every 25 s (the plugin replies pong).
+      // Start app-level keepalive ping every 25 s (the agent replies pong).
       if (!pingTimer) {
         pingTimer = setInterval(() => {
           if (active && active.readyState === active.OPEN) {

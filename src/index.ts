@@ -10,9 +10,7 @@
 export { createBridge, type Bridge, type BridgeOptions } from "./bridge.js";
 export type { ResolvedAccount } from "./core/types.js";
 
-// Auth flows
-export { pairWithBrowser, type PairOptions } from "./auth/login.js";
-export { pairWithDeviceCode, type DevicePairOptions } from "./auth/login-device.js";
+// Auth
 export { importToken, type ImportTokenOptions } from "./auth/import-token.js";
 export { hasAnyAuth } from "./auth/presence.js";
 
