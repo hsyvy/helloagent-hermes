@@ -1,46 +1,64 @@
 #!/usr/bin/env node
 /**
- * helloagent-hermes — bridge CLI.
+ * helloagent-hermes — CLI.
  *
  * Commands:
- *   pair               Pair with HelloAgent. Default: PKCE OAuth (browser).
- *     --device         Headless device-code flow.
- *     --token <T> --relay-ws <URL>  Manual ha_* token import (no browser).
- *     --agent-name <N> Suffix used after your handle (default: hermes).
- *     --api-url <URL>  HelloAgent REST base.   Env: HA_HERMES_BRIDGE_API_URL
- *     --web-url <URL>  HelloAgent web base.    Env: HA_HERMES_BRIDGE_WEB_URL
+ *   pair               Pair (if not paired) and start the bridge as a
+ *                      background daemon. Prompts for an `ha_*` agent
+ *                      token interactively.
+ *
+ *     --token <T>      Skip the prompt; use this token directly (e.g. CI).
  *     --account <ID>   Account id for multi-account setups (default: default).
+ *     --re-pair        Stop any running bridge, discard creds, prompt again.
  *
- *   run                Start the bridge (relay client + wschat server).
- *     --port <N>       wschat bind port (default 8770).
- *     --host <H>       wschat bind host (default 127.0.0.1).
- *     --wschat-token <T>  Optional shared secret Hermes must echo in hello.
- *     --account <ID>   Account id to load creds from.
+ *   status             Show paired account info and whether the bridge
+ *                      daemon is running.
  *
- *   status             Show paired accounts and creds metadata.
+ *   stop               Stop the running bridge daemon.
  *
- *   logout             Delete creds for the given account.
+ *   logout             Stop the bridge and delete creds.
  *     --account <ID>   Account id (default: default).
  *
- * Defaults:
- *   API URL  https://api.helloagent.cc
- *   Web URL  https://app.helloagent.cc
- *   Client   helloagent-hermes
+ * State files (under ~/.helloagent-hermes/):
+ *   credentials/<accountId>/creds.json   pair output (chmod 0600)
+ *   bridge.pid                           PID of the running daemon
+ *   bridge.log                           verbose daemon log
+ *
+ * Defaults baked in:
+ *   API URL    https://api.helloagent.cc
+ *   Server WS  wss://api.helloagent.cc/v1/ws
+ *   Bind       ws://127.0.0.1:8770
+ *
+ * Env-var escape hatches (local dev / advanced):
+ *   HA_HERMES_BRIDGE_API_URL    override REST API url
+ *   HA_HERMES_BRIDGE_SERVER_WS  override server WS url
+ *   HA_HERMES_BRIDGE_HOST       override bind host (default 127.0.0.1)
+ *   HA_HERMES_BRIDGE_PORT       override bind port (default 8770)
+ *   HA_HERMES_BRIDGE_TOKEN      shared secret the agent must echo in hello
+ *   HA_HERMES_BRIDGE_DIR        state dir (default ~/.helloagent-hermes)
+ *   HA_HERMES_BRIDGE_DEBUG=1    verbose CLI logs (the daemon is always verbose
+ *                               in its log file)
  */
-import { pairWithBrowser } from "./auth/login.js";
-import { pairWithDeviceCode } from "./auth/login-device.js";
+import { spawn, type ChildProcess } from "node:child_process";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+import * as readline from "node:readline/promises";
+import { stdin, stdout } from "node:process";
+
 import { importToken } from "./auth/import-token.js";
-import { hasAnyAuth } from "./auth/presence.js";
 import {
+  type Creds,
+  CredsFormatError,
   DEFAULT_ACCOUNT_ID,
   deleteCreds,
   listLinkedAccountIds,
+  readCredsLenient,
   readCreds,
+  resolveStateDir,
 } from "./auth/store.js";
 import { createBridge } from "./bridge.js";
-import { logger } from "./core/logger.js";
 
-const log = logger("cli");
+const PAIRING_URL = "https://app.helloagent.cc/app/agents/new";
 
 type Argv = {
   command: string;
@@ -65,80 +83,209 @@ function parseArgs(argv: string[]): Argv {
   return { command: command ?? "help", flags };
 }
 
-function envOrDefault(envName: string, fallback: string): string {
-  return process.env[envName]?.trim() || fallback;
+function envOr<T extends string | number>(envName: string, fallback: T): T {
+  const v = process.env[envName]?.trim();
+  if (!v) return fallback;
+  return (typeof fallback === "number" ? Number(v) : v) as T;
 }
 
 const DEFAULTS = {
-  apiUrl: () => envOrDefault("HA_HERMES_BRIDGE_API_URL", "https://api.helloagent.cc"),
-  webUrl: () => envOrDefault("HA_HERMES_BRIDGE_WEB_URL", "https://app.helloagent.cc"),
-  clientId: () => envOrDefault("HA_HERMES_BRIDGE_CLIENT_ID", "helloagent-hermes"),
-  agentName: "hermes",
-  port: 8770,
-  host: "127.0.0.1",
+  apiUrl: () => envOr("HA_HERMES_BRIDGE_API_URL", "https://api.helloagent.cc"),
+  serverWs: () => envOr("HA_HERMES_BRIDGE_SERVER_WS", "wss://api.helloagent.cc/v1/ws"),
+  host: () => envOr("HA_HERMES_BRIDGE_HOST", "127.0.0.1"),
+  port: () => envOr("HA_HERMES_BRIDGE_PORT", 8770),
+  socketToken: () => process.env.HA_HERMES_BRIDGE_TOKEN?.trim() || undefined,
 };
 
-async function cmdPair(flags: Argv["flags"]): Promise<void> {
+const pidPath = () => path.join(resolveStateDir(), "bridge.pid");
+const logPath = () => path.join(resolveStateDir(), "bridge.log");
+
+async function readRunningPid(): Promise<number | null> {
+  let raw: string;
+  try {
+    raw = await fs.readFile(pidPath(), "utf-8");
+  } catch {
+    return null;
+  }
+  const pid = parseInt(raw.trim(), 10);
+  if (!Number.isFinite(pid) || pid <= 0) return null;
+  try {
+    process.kill(pid, 0); // probe
+    return pid;
+  } catch {
+    // Stale PID; clean up.
+    await fs.unlink(pidPath()).catch(() => undefined);
+    return null;
+  }
+}
+
+async function promptForToken(): Promise<string> {
+  console.log("");
+  console.log("Link this bridge to a HelloAgent account:");
+  console.log("");
+  console.log(`  1. Open ${PAIRING_URL}`);
+  console.log(`  2. Create an agent and copy its token (starts with "ha_")`);
+  console.log("  3. Paste the token below");
+  console.log("");
+  const rl = readline.createInterface({ input: stdin, output: stdout });
+  try {
+    const answer = await rl.question("Token: ");
+    return answer.trim();
+  } finally {
+    rl.close();
+  }
+}
+
+async function ensurePaired(flags: Argv["flags"]): Promise<Creds> {
   const accountId = String(flags.account ?? DEFAULT_ACCOUNT_ID);
-  const apiUrl = String(flags["api-url"] ?? DEFAULTS.apiUrl());
-  const agentName = String(flags["agent-name"] ?? DEFAULTS.agentName);
-  const clientId = String(flags["client-id"] ?? DEFAULTS.clientId());
+  const force = Boolean(flags["re-pair"]);
 
-  // Manual import path
-  if (typeof flags.token === "string" && flags.token) {
-    const relayWs = String(flags["relay-ws"] ?? "");
-    if (!relayWs) throw new Error("--relay-ws is required with --token");
-    const creds = await importToken({
-      token: String(flags.token),
-      apiUrl,
-      relayWs,
-      accountId,
-      onProgress: (l) => console.log(l),
-    });
-    console.log(`✓ paired as @${creds.handle}`);
-    return;
+  const existing = force ? null : await readCreds(accountId);
+  if (existing) return existing;
+
+  const token =
+    typeof flags.token === "string" && flags.token
+      ? flags.token.trim()
+      : await promptForToken();
+
+  if (!token) throw new Error("token is required");
+  if (!token.startsWith("ha_")) {
+    throw new Error('expected an "ha_..." agent token');
   }
 
-  // Device-code path
-  if (flags.device) {
-    const creds = await pairWithDeviceCode({
-      agentName,
-      clientId,
-      apiUrl,
-      accountId,
-      onProgress: (l) => console.log(l),
-    });
-    console.log(`✓ paired as @${creds.handle}`);
-    return;
-  }
-
-  // Browser PKCE path (default)
-  const webUrl = String(flags["web-url"] ?? DEFAULTS.webUrl());
-  const creds = await pairWithBrowser({
-    agentName,
-    clientId,
-    apiUrl,
-    webUrl,
+  const creds = await importToken({
+    token,
+    apiUrl: DEFAULTS.apiUrl(),
+    serverWs: DEFAULTS.serverWs(),
     accountId,
     onProgress: (l) => console.log(l),
   });
-  console.log(`✓ paired as @${creds.handle}`);
+  return creds;
 }
 
-async function cmdRun(flags: Argv["flags"]): Promise<void> {
+function waitForDaemonReady(child: ChildProcess, timeoutMs: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+
+    const cleanup = () => {
+      clearTimeout(timer);
+      child.off("message", onMessage);
+      child.off("exit", onExit);
+      child.off("error", onError);
+    };
+
+    const finish = (err?: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (err) reject(err);
+      else resolve();
+    };
+
+    const onMessage = (message: unknown) => {
+      if (
+        typeof message === "object" &&
+        message !== null &&
+        (message as { type?: unknown }).type === "ready"
+      ) {
+        finish();
+      }
+    };
+
+    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+      const detail = signal ? `signal ${signal}` : `code ${code ?? "unknown"}`;
+      finish(
+        new Error(
+          `bridge daemon exited before ready (${detail}). Check ${logPath()} for details.`,
+        ),
+      );
+    };
+
+    const onError = (err: Error) => {
+      finish(err);
+    };
+
+    const timer = setTimeout(() => {
+      finish(
+        new Error(
+          `bridge daemon did not become ready within ${timeoutMs}ms. Check ${logPath()} for details.`,
+        ),
+      );
+    }, timeoutMs);
+
+    child.once("message", onMessage);
+    child.once("exit", onExit);
+    child.once("error", onError);
+  });
+}
+
+async function spawnDaemon(accountId: string): Promise<{ pid: number }> {
+  const stateDir = resolveStateDir();
+  await fs.mkdir(stateDir, { recursive: true });
+
+  const out = await fs.open(logPath(), "a");
+  try {
+    const child = spawn(
+      process.execPath,
+      [process.argv[1], "_serve", "--account", accountId],
+      {
+        detached: true,
+        stdio: ["ignore", out.fd, out.fd, "ipc"],
+        env: { ...process.env, HA_HERMES_BRIDGE_DEBUG: "1" },
+      },
+    );
+    try {
+      if (!child.pid) throw new Error("failed to spawn bridge daemon");
+      await fs.writeFile(pidPath(), String(child.pid), { mode: 0o600 });
+      await waitForDaemonReady(child, 12_000);
+      if (child.connected) child.disconnect();
+      child.unref();
+      return { pid: child.pid };
+    } catch (err) {
+      if (child.pid) {
+        try {
+          process.kill(child.pid, "SIGTERM");
+        } catch {
+          /* best-effort */
+        }
+      }
+      await fs.unlink(pidPath()).catch(() => undefined);
+      throw err;
+    }
+  } finally {
+    await out.close();
+  }
+}
+
+async function cmdPair(flags: Argv["flags"]): Promise<void> {
+  const accountId = String(flags.account ?? DEFAULT_ACCOUNT_ID);
+
+  // If --re-pair, stop any running daemon first.
+  if (flags["re-pair"]) await stopDaemon();
+
+  const running = await readRunningPid();
+  const creds = await ensurePaired(flags);
+
+  if (running) {
+    console.log(`✓ Connected to HelloAgent as @${creds.handle}.`);
+    console.log("  Bridge already running — chat through the HelloAgent app or browser.");
+    return;
+  }
+
+  await spawnDaemon(accountId);
+
+  console.log(`✓ Connected to HelloAgent as @${creds.handle}.`);
+  console.log("  You can now chat with your agent through the HelloAgent app or browser.");
+}
+
+async function cmdServe(flags: Argv["flags"]): Promise<void> {
+  // Hidden subcommand — runs the bridge in the foreground until SIGTERM.
+  // Invoked by `pair` via spawn, with stdout/stderr redirected to bridge.log.
   const accountId = String(flags.account ?? DEFAULT_ACCOUNT_ID);
   const creds = await readCreds(accountId);
   if (!creds) {
-    throw new Error(
-      `no paired account "${accountId}". Run 'helloagent-hermes pair' first.`,
-    );
+    throw new Error(`no paired account "${accountId}"`);
   }
-  const port = Number(flags.port ?? DEFAULTS.port);
-  const host = String(flags.host ?? DEFAULTS.host);
-  const wschatToken =
-    typeof flags["wschat-token"] === "string"
-      ? String(flags["wschat-token"])
-      : undefined;
 
   const bridge = createBridge({
     account: {
@@ -148,27 +295,48 @@ async function cmdRun(flags: Argv["flags"]): Promise<void> {
       ownerHandle: creds.ownerHandle,
       token: creds.token,
       apiUrl: creds.apiUrl,
-      relayWs: creds.relayWs,
+      serverWs: creds.serverWs,
     },
-    host,
-    port,
-    wschatToken,
+    host: DEFAULTS.host(),
+    port: DEFAULTS.port(),
+    socketToken: DEFAULTS.socketToken(),
   });
 
   const onShutdown = async () => {
-    log.info("shutdown signal received");
     await bridge.stop();
+    await fs.unlink(pidPath()).catch(() => undefined);
     process.exit(0);
   };
   process.once("SIGINT", () => void onShutdown());
   process.once("SIGTERM", () => void onShutdown());
 
   await bridge.start();
-  console.log(`bridge running:`);
-  console.log(`  HelloAgent handle:  @${creds.handle}`);
-  console.log(`  wschat endpoint:    ws://${host}:${port}`);
-  console.log(`  point Hermes at:    WSCHAT_URL=ws://${host}:${port}`);
-  console.log(`Press Ctrl+C to stop.`);
+  if (typeof process.send === "function") {
+    process.send({ type: "ready" });
+  }
+  // Idle until signaled. setInterval keeps the event loop alive without
+  // doing real work; the bridge has its own listeners holding it open.
+  setInterval(() => undefined, 1 << 30);
+}
+
+async function stopDaemon(): Promise<boolean> {
+  const pid = await readRunningPid();
+  if (!pid) return false;
+  process.kill(pid, "SIGTERM");
+  // Wait briefly for it to exit and remove its PID file.
+  for (let i = 0; i < 30; i++) {
+    if (!(await readRunningPid())) return true;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  // Best-effort cleanup if it didn't go away.
+  await fs.unlink(pidPath()).catch(() => undefined);
+  return true;
+}
+
+async function cmdStop(): Promise<void> {
+  const stopped = await stopDaemon();
+  if (stopped) console.log("✓ bridge stopped");
+  else console.log("No bridge running.");
 }
 
 async function cmdStatus(): Promise<void> {
@@ -179,59 +347,89 @@ async function cmdStatus(): Promise<void> {
     return;
   }
   for (const id of ids) {
-    const creds = await readCreds(id);
+    let creds: Creds | null;
+    try {
+      creds = await readCreds(id);
+    } catch (err) {
+      if (!(err instanceof CredsFormatError)) throw err;
+      console.log(`account: ${id}`);
+      console.log(`  creds:     incompatible (${err.message})`);
+      continue;
+    }
     if (!creds) continue;
     console.log(`account: ${id}`);
     console.log(`  handle:    @${creds.handle}`);
     console.log(`  api:       ${creds.apiUrl}`);
-    console.log(`  relay:     ${creds.relayWs}`);
+    console.log(`  server:    ${creds.serverWs}`);
     console.log(`  linked:    ${creds.linkedAt}`);
     console.log(`  source:    ${creds.source ?? "(unknown)"}`);
   }
+  const pid = await readRunningPid();
+  console.log("");
+  if (pid) console.log(`bridge: running (pid ${pid}, log ${logPath()})`);
+  else console.log("bridge: stopped");
 }
 
 async function cmdLogout(flags: Argv["flags"]): Promise<void> {
   const accountId = String(flags.account ?? DEFAULT_ACCOUNT_ID);
-  const creds = await readCreds(accountId);
-  if (!creds) {
-    console.log(`No paired account "${accountId}".`);
-    return;
+  let creds: Creds | null = null;
+  let invalidCreds = false;
+  let invalidHandle: string | undefined;
+  try {
+    creds = await readCreds(accountId);
+  } catch (err) {
+    if (!(err instanceof CredsFormatError)) throw err;
+    invalidCreds = true;
+    const raw = await readCredsLenient(accountId);
+    invalidHandle = typeof raw?.handle === "string" ? raw.handle : undefined;
+    console.warn(`Deleting incompatible credentials: ${err.message}`);
   }
+  if (!creds) {
+    if (!invalidCreds) {
+      console.log(`No paired account "${accountId}".`);
+      return;
+    }
+  }
+  await stopDaemon();
   await deleteCreds(accountId);
-  console.log(`✓ removed creds for @${creds.handle} (${accountId})`);
+  const handle = creds?.handle ?? invalidHandle;
+  if (handle) console.log(`✓ removed creds for @${handle} (${accountId})`);
+  else console.log(`✓ removed creds for account "${accountId}"`);
   console.log(
-    "Note: the relay-side agent token is not revoked — delete via the HelloAgent web UI or DELETE /v1/channels/<provider>.",
+    "Note: the server-side agent token is not revoked — delete via the HelloAgent web UI.",
   );
 }
 
 function printHelp(): void {
-  console.log(`helloagent-hermes — bridge HelloAgent users to a Hermes agent
+  console.log(`helloagent-hermes — bridge HelloAgent users to a local agent
 
 Usage:
-  helloagent-hermes pair [--device | --token <T> --relay-ws <URL>] [--agent-name <N>]
-  helloagent-hermes run  [--port <N>] [--host <H>] [--wschat-token <T>]
+  helloagent-hermes pair    [--token <T>] [--account <ID>] [--re-pair]
   helloagent-hermes status
-  helloagent-hermes logout [--account <ID>]
+  helloagent-hermes stop
+  helloagent-hermes logout  [--account <ID>]
+
+The 'pair' command links the bridge to a HelloAgent agent token (prompts
+interactively if not given), then starts the bridge as a background
+daemon and returns. Your terminal is free; the bridge keeps running.
+
+To get a token, visit ${PAIRING_URL}, create an agent, and copy its token.
 
 Examples:
-  # 1. Pair (browser PKCE)
-  helloagent-hermes pair --agent-name jarvis
+  # First-time setup (interactive paste):
+  helloagent-hermes pair
 
-  # 2. Pair (manual token import for advanced users)
-  helloagent-hermes pair --token ha_xxx --relay-ws ws://localhost:8080/v1/ws
+  # Subsequent runs (creds already exist — skips the prompt):
+  helloagent-hermes pair
 
-  # 3. Run the bridge
-  helloagent-hermes run --port 8770
+  # Non-interactive (CI / scripting):
+  helloagent-hermes pair --token ha_xxx
 
-  # 4. Then in Hermes (with the wschat plugin installed):
-  WSCHAT_URL=ws://127.0.0.1:8770 hermes gateway
+  # Force re-pair against a fresh token:
+  helloagent-hermes pair --re-pair
 
-Env overrides:
-  HA_HERMES_BRIDGE_DIR       state dir (default ~/.helloagent-hermes)
-  HA_HERMES_BRIDGE_API_URL   default --api-url
-  HA_HERMES_BRIDGE_WEB_URL   default --web-url
-  HA_HERMES_BRIDGE_CLIENT_ID default --client-id
-  HA_HERMES_BRIDGE_DEBUG=1   verbose logs
+  # Stop the running bridge:
+  helloagent-hermes stop
 `);
 }
 
@@ -245,14 +443,17 @@ async function main(): Promise<void> {
     case "pair":
       await cmdPair(flags);
       return;
-    case "run":
-      await cmdRun(flags);
-      return;
     case "status":
       await cmdStatus();
       return;
+    case "stop":
+      await cmdStop();
+      return;
     case "logout":
       await cmdLogout(flags);
+      return;
+    case "_serve":
+      await cmdServe(flags);
       return;
     default:
       console.error(`unknown command: ${command}\n`);
@@ -268,6 +469,3 @@ main().catch((err) => {
   }
   process.exit(1);
 });
-
-// Re-export hasAnyAuth so external embedders / tests can probe quickly.
-export { hasAnyAuth };

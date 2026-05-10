@@ -1,8 +1,7 @@
 /**
- * TTL + LRU dedup for inbound messages from the relay. Prevents
- * double-dispatch after relay reconnects (the Agent SDK can replay messages
- * within its delivery window). Mirrors the shape used by openclaw-HelloAgent
- * but trimmed to the inputs we actually need.
+ * TTL + LRU dedup for inbound messages from the HelloAgent server. Prevents
+ * double-dispatch after server reconnects (the Agent SDK can replay messages
+ * within its delivery window).
  */
 
 const DEFAULT_TTL_MS = 5 * 60 * 1000;

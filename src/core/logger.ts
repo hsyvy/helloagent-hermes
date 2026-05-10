@@ -1,6 +1,10 @@
 /**
- * Tiny namespaced logger. Honors HA_HERMES_BRIDGE_DEBUG=1 for verbose output.
- * Adapted from openclaw-HelloAgent/src/core/ha-logger.ts.
+ * Tiny namespaced logger.
+ *
+ * By default only warnings and errors are emitted — info and debug are
+ * suppressed to keep CLI output clean. Set `HA_HERMES_BRIDGE_DEBUG=1` to
+ * print every level. The detached bridge daemon always runs with that
+ * env var set so its log file captures the full picture.
  */
 
 const DEBUG = process.env.HA_HERMES_BRIDGE_DEBUG === "1";
@@ -26,7 +30,9 @@ function emit(level: string, ns: string, msg: string, fields?: Record<string, un
 
 export function logger(ns: string): Logger {
   return {
-    info: (msg, fields) => emit("info", ns, msg, fields),
+    info: (msg, fields) => {
+      if (DEBUG) emit("info", ns, msg, fields);
+    },
     warn: (msg, fields) => emit("warn", ns, msg, fields),
     error: (msg, fields) => emit("error", ns, msg, fields),
     debug: (msg, fields) => {
