@@ -58,9 +58,9 @@ Link this bridge to a HelloAgent account:
 
 Token: ha_xxxxxxxxxxxxx
 
-✓ paired as @alice/jarvis
-✓ bridge running as @alice/jarvis
-  agent socket:  ws://127.0.0.1:8770
+imported token for @alice/jarvis
+✓ Connected to HelloAgent as @alice/jarvis.
+  You can now chat with your agent through the HelloAgent app or browser.
 ```
 
 Then in Hermes (with the `wschat` plugin installed at
@@ -96,11 +96,13 @@ the state dir with `HA_HERMES_BRIDGE_DIR`.
 ```
 helloagent-hermes pair    [--token <T>] [--account <ID>] [--re-pair]
 helloagent-hermes status
+helloagent-hermes stop
 helloagent-hermes logout  [--account <ID>]
 ```
 
-`pair` is the only running command — it pairs (if needed) and serves the
-agent socket until you Ctrl+C.
+`pair` pairs if needed, starts the bridge as a background daemon, waits
+until it is connected to HelloAgent, and then returns. Use `status` to see
+whether the daemon is running and `stop` to shut it down.
 
 ## Configuration
 
@@ -109,7 +111,7 @@ Defaults are baked in for the common case:
 | Setting | Default |
 |---|---|
 | API URL | `https://api.helloagent.cc` |
-| Web URL | `https://app.helloagent.cc` |
+| Server WS | `wss://api.helloagent.cc/v1/ws` |
 | Bind | `ws://127.0.0.1:8770` |
 
 Env-var overrides if you really need them (local dev mostly):

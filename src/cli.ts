@@ -39,9 +39,8 @@
  *   HA_HERMES_BRIDGE_DEBUG=1    verbose CLI logs (the daemon is always verbose
  *                               in its log file)
  */
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs/promises";
-import * as net from "node:net";
 import * as path from "node:path";
 import * as readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
@@ -49,9 +48,11 @@ import { stdin, stdout } from "node:process";
 import { importToken } from "./auth/import-token.js";
 import {
   type Creds,
+  CredsFormatError,
   DEFAULT_ACCOUNT_ID,
   deleteCreds,
   listLinkedAccountIds,
+  readCredsLenient,
   readCreds,
   resolveStateDir,
 } from "./auth/store.js";
@@ -118,23 +119,6 @@ async function readRunningPid(): Promise<number | null> {
   }
 }
 
-async function waitForListener(host: string, port: number, timeoutMs: number): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const ok = await new Promise<boolean>((resolve) => {
-      const sock = net.createConnection({ host, port });
-      sock.once("connect", () => {
-        sock.destroy();
-        resolve(true);
-      });
-      sock.once("error", () => resolve(false));
-    });
-    if (ok) return true;
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  return false;
-}
-
 async function promptForToken(): Promise<string> {
   console.log("");
   console.log("Link this bridge to a HelloAgent account:");
@@ -179,6 +163,62 @@ async function ensurePaired(flags: Argv["flags"]): Promise<Creds> {
   return creds;
 }
 
+function waitForDaemonReady(child: ChildProcess, timeoutMs: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+
+    const cleanup = () => {
+      clearTimeout(timer);
+      child.off("message", onMessage);
+      child.off("exit", onExit);
+      child.off("error", onError);
+    };
+
+    const finish = (err?: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (err) reject(err);
+      else resolve();
+    };
+
+    const onMessage = (message: unknown) => {
+      if (
+        typeof message === "object" &&
+        message !== null &&
+        (message as { type?: unknown }).type === "ready"
+      ) {
+        finish();
+      }
+    };
+
+    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+      const detail = signal ? `signal ${signal}` : `code ${code ?? "unknown"}`;
+      finish(
+        new Error(
+          `bridge daemon exited before ready (${detail}). Check ${logPath()} for details.`,
+        ),
+      );
+    };
+
+    const onError = (err: Error) => {
+      finish(err);
+    };
+
+    const timer = setTimeout(() => {
+      finish(
+        new Error(
+          `bridge daemon did not become ready within ${timeoutMs}ms. Check ${logPath()} for details.`,
+        ),
+      );
+    }, timeoutMs);
+
+    child.once("message", onMessage);
+    child.once("exit", onExit);
+    child.once("error", onError);
+  });
+}
+
 async function spawnDaemon(accountId: string): Promise<{ pid: number }> {
   const stateDir = resolveStateDir();
   await fs.mkdir(stateDir, { recursive: true });
@@ -190,14 +230,28 @@ async function spawnDaemon(accountId: string): Promise<{ pid: number }> {
       [process.argv[1], "_serve", "--account", accountId],
       {
         detached: true,
-        stdio: ["ignore", out.fd, out.fd],
+        stdio: ["ignore", out.fd, out.fd, "ipc"],
         env: { ...process.env, HA_HERMES_BRIDGE_DEBUG: "1" },
       },
     );
-    if (!child.pid) throw new Error("failed to spawn bridge daemon");
-    await fs.writeFile(pidPath(), String(child.pid), { mode: 0o600 });
-    child.unref();
-    return { pid: child.pid };
+    try {
+      if (!child.pid) throw new Error("failed to spawn bridge daemon");
+      await fs.writeFile(pidPath(), String(child.pid), { mode: 0o600 });
+      await waitForDaemonReady(child, 12_000);
+      if (child.connected) child.disconnect();
+      child.unref();
+      return { pid: child.pid };
+    } catch (err) {
+      if (child.pid) {
+        try {
+          process.kill(child.pid, "SIGTERM");
+        } catch {
+          /* best-effort */
+        }
+      }
+      await fs.unlink(pidPath()).catch(() => undefined);
+      throw err;
+    }
   } finally {
     await out.close();
   }
@@ -219,13 +273,6 @@ async function cmdPair(flags: Argv["flags"]): Promise<void> {
   }
 
   await spawnDaemon(accountId);
-
-  const ok = await waitForListener(DEFAULTS.host(), DEFAULTS.port(), 8000);
-  if (!ok) {
-    throw new Error(
-      `bridge daemon did not start listening within 8s. Check ${logPath()} for details.`,
-    );
-  }
 
   console.log(`✓ Connected to HelloAgent as @${creds.handle}.`);
   console.log("  You can now chat with your agent through the HelloAgent app or browser.");
@@ -264,6 +311,9 @@ async function cmdServe(flags: Argv["flags"]): Promise<void> {
   process.once("SIGTERM", () => void onShutdown());
 
   await bridge.start();
+  if (typeof process.send === "function") {
+    process.send({ type: "ready" });
+  }
   // Idle until signaled. setInterval keeps the event loop alive without
   // doing real work; the bridge has its own listeners holding it open.
   setInterval(() => undefined, 1 << 30);
@@ -297,7 +347,15 @@ async function cmdStatus(): Promise<void> {
     return;
   }
   for (const id of ids) {
-    const creds = await readCreds(id);
+    let creds: Creds | null;
+    try {
+      creds = await readCreds(id);
+    } catch (err) {
+      if (!(err instanceof CredsFormatError)) throw err;
+      console.log(`account: ${id}`);
+      console.log(`  creds:     incompatible (${err.message})`);
+      continue;
+    }
     if (!creds) continue;
     console.log(`account: ${id}`);
     console.log(`  handle:    @${creds.handle}`);
@@ -314,14 +372,29 @@ async function cmdStatus(): Promise<void> {
 
 async function cmdLogout(flags: Argv["flags"]): Promise<void> {
   const accountId = String(flags.account ?? DEFAULT_ACCOUNT_ID);
-  const creds = await readCreds(accountId);
+  let creds: Creds | null = null;
+  let invalidCreds = false;
+  let invalidHandle: string | undefined;
+  try {
+    creds = await readCreds(accountId);
+  } catch (err) {
+    if (!(err instanceof CredsFormatError)) throw err;
+    invalidCreds = true;
+    const raw = await readCredsLenient(accountId);
+    invalidHandle = typeof raw?.handle === "string" ? raw.handle : undefined;
+    console.warn(`Deleting incompatible credentials: ${err.message}`);
+  }
   if (!creds) {
-    console.log(`No paired account "${accountId}".`);
-    return;
+    if (!invalidCreds) {
+      console.log(`No paired account "${accountId}".`);
+      return;
+    }
   }
   await stopDaemon();
   await deleteCreds(accountId);
-  console.log(`✓ removed creds for @${creds.handle} (${accountId})`);
+  const handle = creds?.handle ?? invalidHandle;
+  if (handle) console.log(`✓ removed creds for @${handle} (${accountId})`);
+  else console.log(`✓ removed creds for account "${accountId}"`);
   console.log(
     "Note: the server-side agent token is not revoked — delete via the HelloAgent web UI.",
   );

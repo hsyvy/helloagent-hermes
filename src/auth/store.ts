@@ -15,8 +15,18 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-export const CREDS_VERSION = 1;
+export const CREDS_VERSION = 2;
 export const DEFAULT_ACCOUNT_ID = "default";
+
+export class CredsFormatError extends Error {
+  constructor(
+    message: string,
+    readonly path: string,
+  ) {
+    super(message);
+    this.name = "CredsFormatError";
+  }
+}
 
 export type Creds = {
   version: number;
@@ -54,20 +64,77 @@ function backupPath(accountId: string = DEFAULT_ACCOUNT_ID): string {
   return path.join(accountAuthDir(accountId), "creds.json.bak");
 }
 
+function recoveryHint(accountId: string): string {
+  return `Run 'helloagent-hermes pair --re-pair --account ${accountId}' to re-link, or 'helloagent-hermes logout --account ${accountId}' to delete.`;
+}
+
+function formatError(accountId: string, reason: string): CredsFormatError {
+  const file = credsPath(accountId);
+  return new CredsFormatError(
+    `creds at ${file} ${reason}. ${recoveryHint(accountId)}`,
+    file,
+  );
+}
+
+function validateCreds(parsed: unknown, accountId: string): Creds {
+  if (typeof parsed !== "object" || parsed === null) {
+    throw formatError(accountId, "are not a JSON object");
+  }
+
+  const candidate = parsed as Partial<Creds>;
+  if (candidate.version !== CREDS_VERSION) {
+    throw formatError(
+      accountId,
+      `are version ${String(candidate.version)}, expected ${CREDS_VERSION}`,
+    );
+  }
+
+  const requiredStrings = [
+    "handle",
+    "agentName",
+    "ownerHandle",
+    "token",
+    "apiUrl",
+    "serverWs",
+    "linkedAt",
+  ] as const;
+  for (const field of requiredStrings) {
+    if (typeof candidate[field] !== "string" || candidate[field].length === 0) {
+      const hint = field === "serverWs"
+        ? "; this looks like an older credentials file"
+        : "";
+      throw formatError(accountId, `are missing ${field}${hint}`);
+    }
+  }
+
+  return candidate as Creds;
+}
+
 export async function readCreds(
   accountId: string = DEFAULT_ACCOUNT_ID,
 ): Promise<Creds | null> {
   try {
     const raw = await fs.readFile(credsPath(accountId), "utf-8");
-    const parsed = JSON.parse(raw) as Creds;
-    if (parsed.version !== CREDS_VERSION) {
-      throw new Error(
-        `creds at ${credsPath(accountId)} are version ${parsed.version}, expected ${CREDS_VERSION}. Run 'helloagent-hermes pair' to re-link, or 'helloagent-hermes logout --account ${accountId}' to delete.`,
-      );
+    return validateCreds(JSON.parse(raw), accountId);
+  } catch (e) {
+    if (e instanceof SyntaxError) {
+      throw formatError(accountId, "contain invalid JSON");
     }
-    return parsed;
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw e;
+  }
+}
+
+export async function readCredsLenient(
+  accountId: string = DEFAULT_ACCOUNT_ID,
+): Promise<Partial<Creds> | null> {
+  try {
+    const raw = await fs.readFile(credsPath(accountId), "utf-8");
+    const parsed = JSON.parse(raw) as Partial<Creds>;
+    return typeof parsed === "object" && parsed !== null ? parsed : {};
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
+    if (e instanceof SyntaxError) return {};
     throw e;
   }
 }
