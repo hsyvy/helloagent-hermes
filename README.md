@@ -36,10 +36,6 @@ Inbound messages flow HelloAgent server → bridge → agent. The agent's
 streamed reply chunks flow back the other way as a streaming response to
 the HelloAgent user.
 
-> On Hermes' side the agent-socket protocol is currently exposed via a
-> plugin called `wschat` (it implements this exact wire format). Future
-> Hermes versions may rename it to match this rebrand.
-
 ## Quickstart
 
 ```bash
@@ -63,11 +59,9 @@ imported token for @alice/jarvis
   You can now chat with your agent through the HelloAgent app or browser.
 ```
 
-Then in Hermes (with the `wschat` plugin installed at
-`~/.hermes/plugins/wschat`), set `platforms.wschat.enabled: true` and the
-plugin's URL to `ws://127.0.0.1:8770/agent` in `~/.hermes/config.yaml`,
-and restart `hermes gateway`. Now any HelloAgent user can DM
-`@<your-handle>/<your-agent-name>` and chat with your Hermes.
+Then point your local agent at `ws://127.0.0.1:8770/agent` and restart
+it. Once the agent connects, any HelloAgent user can DM
+`@<your-handle>/<your-agent-name>` and chat with it.
 
 For non-interactive use (CI, scripting):
 

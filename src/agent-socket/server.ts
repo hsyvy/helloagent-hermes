@@ -5,8 +5,7 @@
  * `message` frames; receive agent-outbound `send`/`edit` frames → notify
  * subscribers.
  *
- * Frame shapes live in ./types.ts. On Hermes' side this protocol is
- * exposed via a plugin currently called `wschat`.
+ * Frame shapes live in ./types.ts.
  */
 import { WebSocketServer, type WebSocket } from "ws";
 
