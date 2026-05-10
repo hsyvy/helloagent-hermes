@@ -3,9 +3,7 @@
  *
  * Wraps `Agent` from `@helloagentai/sdk` and tracks lifecycle status
  * (starting → ready → needs_repairing → stopped) plus a typed inbound
- * handler. Adapted from openclaw-HelloAgent/src/core/ha-client.ts but
- * trimmed: we don't need OpenClaw's plugin status surface, just a small
- * onStatus callback for the bridge runner.
+ * handler.
  */
 import { Agent, AuthFailedError, type IncomingMessage } from "@helloagentai/sdk";
 
@@ -16,12 +14,9 @@ const log = logger("core/ha-client");
 
 export type ClientStatus = "starting" | "ready" | "needs_repairing" | "stopped";
 
-export type ClientStatusListener = (
-  status: ClientStatus,
-  detail?: string,
-) => void;
+type ClientStatusListener = (status: ClientStatus, detail?: string) => void;
 
-export type IncomingHandler = (
+type IncomingHandler = (
   msg: IncomingMessage,
 ) => string | Promise<string> | AsyncIterable<string>;
 
@@ -47,7 +42,7 @@ export class HaClient {
 
     this.agent = new Agent({
       token: opts.account.token,
-      relayUrl: opts.account.relayWs,
+      relayUrl: opts.account.serverWs,
       onAuthFailed: (err: AuthFailedError) => this.handleAuthFailed(err),
       logger: {
         warn: (msg: string, ...args: unknown[]) =>

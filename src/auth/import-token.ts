@@ -1,10 +1,7 @@
 /**
  * Manual fallback: paste an existing HelloAgent ha_* agent token, validate
- * by completing one WebSocket auth handshake against the relay, then
- * persist it under the bridge's credential dir.
- *
- * Lifted from openclaw-HelloAgent/src/auth/import-token.ts with imports
- * pointed at the bridge-local store.
+ * by completing one WebSocket auth handshake against the HelloAgent server,
+ * then persist it under the bridge's credential dir.
  */
 import { Agent, AuthFailedError } from "@helloagentai/sdk";
 
@@ -18,7 +15,7 @@ import {
 export type ImportTokenOptions = {
   token: string;
   apiUrl: string;
-  relayWs: string;
+  serverWs: string;
   accountId?: string;
   timeoutMs?: number;
   onProgress?: (line: string) => void;
@@ -29,7 +26,7 @@ export async function importToken(opts: ImportTokenOptions): Promise<Creds> {
   const log = opts.onProgress ?? ((s: string) => console.log(s));
   const handle = await resolveHandleFromToken(
     opts.token,
-    opts.relayWs,
+    opts.serverWs,
     opts.timeoutMs,
   );
   const { ownerHandle, agentName } = splitHandle(handle);
@@ -41,7 +38,7 @@ export async function importToken(opts: ImportTokenOptions): Promise<Creds> {
     ownerHandle,
     token: opts.token,
     apiUrl: opts.apiUrl,
-    relayWs: opts.relayWs,
+    serverWs: opts.serverWs,
     linkedAt: new Date().toISOString(),
     source: "manual",
   };
@@ -52,7 +49,7 @@ export async function importToken(opts: ImportTokenOptions): Promise<Creds> {
 
 async function resolveHandleFromToken(
   token: string,
-  relayWs: string,
+  serverWs: string,
   timeoutMs = 30_000,
 ): Promise<string> {
   if (!token.startsWith("ha_")) {
@@ -62,7 +59,7 @@ async function resolveHandleFromToken(
   let authFailure: AuthFailedError | undefined;
   const agent = new Agent({
     token,
-    relayUrl: relayWs,
+    relayUrl: serverWs,
     reconnect: { initialMs: 100, maxMs: 100 },
     logger: { warn: () => undefined, error: () => undefined },
     onAuthFailed: (err) => {
@@ -75,7 +72,7 @@ async function resolveHandleFromToken(
     while (Date.now() < deadline) {
       if (agent.handle) return agent.handle;
       if (authFailure) {
-        throw new Error(`token rejected by relay: ${authFailure.detail}`);
+        throw new Error(`token rejected by HelloAgent server: ${authFailure.detail}`);
       }
       await new Promise((r) => setTimeout(r, 50));
     }
