@@ -19,6 +19,11 @@
  *   logout             Stop the bridge and delete creds.
  *     --account <ID>   Account id (default: default).
  *
+ *   uninstall          Stop the bridge and remove ALL local state (every
+ *                      account's creds, the daemon log, the state dir).
+ *                      Prompts to confirm.
+ *     --yes            Skip the confirmation prompt (for scripting).
+ *
  * State files (under ~/.helloagent-hermes/):
  *   credentials/<accountId>/creds.json   pair output (chmod 0600)
  *   bridge.pid                           PID of the running daemon
@@ -370,6 +375,81 @@ async function cmdStatus(): Promise<void> {
   else console.log("bridge: stopped");
 }
 
+async function cmdUninstall(flags: Argv["flags"]): Promise<void> {
+  const skipConfirm = Boolean(flags.yes || flags.y);
+  const stateDir = resolveStateDir();
+
+  // Discover everything we'd remove, so the user sees the plan first.
+  const pid = await readRunningPid();
+  const ids = await listLinkedAccountIds();
+  const accounts: { id: string; handle?: string }[] = [];
+  for (const id of ids) {
+    let handle: string | undefined;
+    try {
+      const c = await readCreds(id);
+      handle = c?.handle;
+    } catch (err) {
+      // Incompatible / malformed creds still get deleted; just no handle.
+      if (!(err instanceof CredsFormatError)) throw err;
+      const raw = await readCredsLenient(id);
+      handle = typeof raw?.handle === "string" ? raw.handle : undefined;
+    }
+    accounts.push({ id, handle });
+  }
+  let stateDirExists = true;
+  try {
+    await fs.access(stateDir);
+  } catch {
+    stateDirExists = false;
+  }
+
+  if (!pid && accounts.length === 0 && !stateDirExists) {
+    console.log("Nothing to remove — no daemon running, no paired accounts, no state dir.");
+    console.log("");
+    console.log("To finish uninstalling, run:  npm uninstall -g @helloagentai/hermes");
+    return;
+  }
+
+  console.log("This will:");
+  if (pid) console.log(`  • stop the bridge daemon (pid ${pid})`);
+  for (const a of accounts) {
+    const label = a.handle ? `@${a.handle}` : "(no handle)";
+    console.log(`  • delete creds for "${a.id}" ${label}`);
+  }
+  if (stateDirExists) console.log(`  • remove ${stateDir}/ (including bridge.log)`);
+  console.log("");
+
+  if (!skipConfirm) {
+    const rl = readline.createInterface({ input: stdin, output: stdout });
+    let answer: string;
+    try {
+      answer = (await rl.question("Proceed? [y/N]: ")).trim().toLowerCase();
+    } finally {
+      rl.close();
+    }
+    if (answer !== "y" && answer !== "yes") {
+      console.log("Aborted.");
+      return;
+    }
+  }
+
+  await stopDaemon();
+  for (const a of accounts) {
+    await deleteCreds(a.id);
+  }
+  if (stateDirExists) {
+    await fs.rm(stateDir, { recursive: true, force: true });
+  }
+
+  console.log("✓ local state removed");
+  console.log("");
+  console.log("Two things this command can't do for you:");
+  console.log("  1. Remove the package:    npm uninstall -g @helloagentai/hermes");
+  console.log("  2. Revoke the agent token on the server. Visit");
+  console.log("     https://app.helloagent.cc and delete the agent — until you");
+  console.log("     do, anyone with the token can still impersonate it.");
+}
+
 async function cmdLogout(flags: Argv["flags"]): Promise<void> {
   const accountId = String(flags.account ?? DEFAULT_ACCOUNT_ID);
   let creds: Creds | null = null;
@@ -404,10 +484,11 @@ function printHelp(): void {
   console.log(`helloagent-hermes — bridge HelloAgent users to a local agent
 
 Usage:
-  helloagent-hermes pair    [--token <T>] [--account <ID>] [--re-pair]
+  helloagent-hermes pair       [--token <T>] [--account <ID>] [--re-pair]
   helloagent-hermes status
   helloagent-hermes stop
-  helloagent-hermes logout  [--account <ID>]
+  helloagent-hermes logout     [--account <ID>]
+  helloagent-hermes uninstall  [--yes]
 
 The 'pair' command links the bridge to a HelloAgent agent token (prompts
 interactively if not given), then starts the bridge as a background
@@ -430,6 +511,9 @@ Examples:
 
   # Stop the running bridge:
   helloagent-hermes stop
+
+  # Remove all local state (then 'npm uninstall -g @helloagentai/hermes'):
+  helloagent-hermes uninstall
 `);
 }
 
@@ -451,6 +535,9 @@ async function main(): Promise<void> {
       return;
     case "logout":
       await cmdLogout(flags);
+      return;
+    case "uninstall":
+      await cmdUninstall(flags);
       return;
     case "_serve":
       await cmdServe(flags);
