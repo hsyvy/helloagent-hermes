@@ -46,6 +46,7 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs/promises";
+import os from "node:os";
 import * as path from "node:path";
 import * as readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
@@ -64,6 +65,7 @@ import {
 import { createBridge } from "./bridge.js";
 
 const PAIRING_URL = "https://app.helloagent.cc/app/agents/new";
+const DEFAULT_STATE_DIR = path.join(os.homedir(), ".helloagent-hermes");
 
 type Argv = {
   command: string;
@@ -104,6 +106,24 @@ const DEFAULTS = {
 
 const pidPath = () => path.join(resolveStateDir(), "bridge.pid");
 const logPath = () => path.join(resolveStateDir(), "bridge.log");
+
+function assertDefaultUninstallTarget(stateDir: string): void {
+  const configuredStateDir = path.resolve(stateDir);
+  const allowedStateDir = path.resolve(DEFAULT_STATE_DIR);
+  const authDirOverride = process.env.HA_HERMES_BRIDGE_AUTH_DIR?.trim();
+
+  if (configuredStateDir === allowedStateDir && !authDirOverride) return;
+
+  const overrideDetail = authDirOverride
+    ? `\nHA_HERMES_BRIDGE_AUTH_DIR is set to ${authDirOverride}`
+    : "";
+  throw new Error(
+    `refusing to uninstall outside the default state dir\n` +
+      `configured state dir: ${stateDir}\n` +
+      `allowed state dir:    ${DEFAULT_STATE_DIR}${overrideDetail}\n` +
+      `Unset HA_HERMES_BRIDGE_DIR/HA_HERMES_BRIDGE_AUTH_DIR or remove custom state manually.`,
+  );
+}
 
 async function readRunningPid(): Promise<number | null> {
   let raw: string;
@@ -378,6 +398,7 @@ async function cmdStatus(): Promise<void> {
 async function cmdUninstall(flags: Argv["flags"]): Promise<void> {
   const skipConfirm = Boolean(flags.yes || flags.y);
   const stateDir = resolveStateDir();
+  assertDefaultUninstallTarget(stateDir);
 
   // Discover everything we'd remove, so the user sees the plan first.
   const pid = await readRunningPid();

@@ -145,6 +145,11 @@ Step 1 is reversible by running `helloagent-hermes pair` again with the
 same (or a freshly issued) token. Step 3 is destructive: a revoked token
 can't come back.
 
+For safety, `uninstall` only removes the default
+`~/.helloagent-hermes` state dir. If `HA_HERMES_BRIDGE_DIR` points
+elsewhere, or `HA_HERMES_BRIDGE_AUTH_DIR` is set, the command refuses
+to run; remove custom state manually after checking the path.
+
 ## What's not in scope (yet)
 
 - Multiple concurrent agent connections (the socket is single-tenant).
