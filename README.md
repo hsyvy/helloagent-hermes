@@ -88,10 +88,11 @@ the state dir with `HA_HERMES_BRIDGE_DIR`.
 ## CLI
 
 ```
-helloagent-hermes pair    [--token <T>] [--account <ID>] [--re-pair]
+helloagent-hermes pair       [--token <T>] [--account <ID>] [--re-pair]
 helloagent-hermes status
 helloagent-hermes stop
-helloagent-hermes logout  [--account <ID>]
+helloagent-hermes logout     [--account <ID>]
+helloagent-hermes uninstall  [--yes]
 ```
 
 `pair` pairs if needed, starts the bridge as a background daemon, waits
@@ -120,6 +121,34 @@ Env-var overrides if you really need them (local dev mostly):
 | `HA_HERMES_BRIDGE_PORT` | Bind port (default `8770`) |
 | `HA_HERMES_BRIDGE_TOKEN` | Shared secret the agent must echo in its hello frame |
 | `HA_HERMES_BRIDGE_DEBUG` | `1` for verbose logs |
+
+## Uninstall
+
+Tear down a paired install in three steps:
+
+```bash
+# 1. Remove local state (stops the daemon, deletes every paired account's
+#    creds, removes the state dir including bridge.log). Prompts to confirm.
+helloagent-hermes uninstall
+#    Add --yes to skip the prompt (for scripting).
+
+# 2. Remove the package itself.
+npm uninstall -g @helloagentai/hermes
+
+# 3. Revoke the agent token on the server.
+#    Open https://app.helloagent.cc and delete the agent. Until you do,
+#    anyone with the token can still impersonate the agent — local
+#    uninstall doesn't touch the server.
+```
+
+Step 1 is reversible by running `helloagent-hermes pair` again with the
+same (or a freshly issued) token. Step 3 is destructive: a revoked token
+can't come back.
+
+For safety, `uninstall` only removes the default
+`~/.helloagent-hermes` state dir. If `HA_HERMES_BRIDGE_DIR` points
+elsewhere, or `HA_HERMES_BRIDGE_AUTH_DIR` is set, the command refuses
+to run; remove custom state manually after checking the path.
 
 ## What's not in scope (yet)
 
